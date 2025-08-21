@@ -2263,116 +2263,66 @@ def render_retrospective_analysis():
                         )
 
     # AI SUGGESTIONS TAB
-ai_tab = st.tabs(["6. AI Suggestions"])[0]
+    ai_tab = st.tabs(["AI Suggestions"])[0]
+    with ai_tab:
+        st.header("AI Suggestions & Insights")
+        st.markdown("Powered by OpenRouter + OpenAI")
 
-with ai_tab:
-    st.header("AI Suggestions and Insights")
-    st.markdown("Powered by OpenRouter + OpenAI")
+        if "ai_messages" not in st.session_state:
+            st.session_state.ai_messages = [
+                {"role": "assistant", "content": "Hi! I'm your SPrint assistant. How can I help?"}
+            ]
 
-    if "ai_messages" not in st.session_state:
-        st.session_state.ai_messages = [
-            {"role": "assistant", "content": "Hello! I'm your sprint planning assistant. How can I help you with your task assignments today?"}
-        ]
+        for msg in st.session_state.ai_messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
-    for message in st.session_state.ai_messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        api_key = st.text_input("🔑 OpenRouter API Key", type="password", key="ai_api_key")
 
-    api_key = st.text_input("OpenRouter API Key", type="password", key="ai_api_key")
+        if "retro_feedback" not in st.session_state or st.session_state.retro_feedback is None:
+            st.info("Analyze retrospectives first in the previous tab.")
+            st.stop()
 
-    if st.session_state.df_tasks is None:
-        st.info("Please upload task data in the Upload Tasks tab first.")
-        st.stop()
+        df = create_dataframe_from_results(st.session_state.retro_feedback)
 
-    df = st.session_state.df_tasks.copy()
+        # Build comprehensive context from feedback and analysis
+        context = "You are an expert AI assistant analyzing retrospective feedback and CSV data.\n\n"
 
-    # 🔍 Extract component expertise from the task file
-    expertise_col_member = "Unnamed: 15"
-    expertise_col_comp = "Unnamed: 16"
-    component_col = None
+        # Add statistical summary
+        total_votes = df['Votes'].sum()
+        avg_votes = df['Votes'].mean()
+        context += f"Statistical Summary:\n"
+        context += f"- Total feedback items: {len(df)}\n"
+        context += f"- Total votes: {total_votes}\n"
+        context += f"- Average votes per item: {avg_votes:.1f}\n"
 
-    if expertise_col_member in df.columns and expertise_col_comp in df.columns:
-        expertise_map = df[[expertise_col_member, expertise_col_comp]].dropna()
-        expertise_map.columns = ["Member", "Expertise"]
-        expertise_dict = expertise_map.set_index("Member")["Expertise"].to_dict()
-    else:
-        expertise_dict = {}
+        # Analyze high-priority items
+        high_votes = df[df['Votes'] >= df['Votes'].quantile(0.75)]
+        context += f"\nHigh Priority Items (top 25% by votes):\n"
+        for _, row in high_votes.iterrows():
+            task_info = f" [Task ID: {row['Task ID']}]" if row['Task ID'] != "None" else ""
+            context += f"- {row['Feedback']} ({row['Votes']} votes){task_info}\n"
 
-    # 📦 Extract component name from Title (e.g., "Comp1: something")
-    if "Title" in df.columns:
-        df["Component"] = df["Title"].str.extract(r"(Comp\d+)", expand=False)
+        # Analyze task associations
+        with_tasks = df['Task ID'].apply(lambda x: x != "None").sum()
+        context += f"\nTask Association Analysis:\n"
+        context += f"- {with_tasks} items ({(with_tasks/len(df)*100):.1f}%) have associated tasks\n"
 
-    # 🧠 Analyze mismatches
-    df["Assigned To"] = df["Assigned To"].fillna("").str.strip()
-    df["Mismatch"] = df.apply(
-        lambda row: (
-            row["Assigned To"] in expertise_dict and
-            pd.notna(row["Component"]) and
-            expertise_dict[row["Assigned To"]] != row["Component"]
-        ),
-        axis=1
-    )
-    mismatches = df[df["Mismatch"]]
+        # Add full feedback list
+        context += f"\nAll Feedback Items:\n"
+        for _, row in df.iterrows():
+            task_info = f" [Task ID: {row['Task ID']}]" if row['Task ID'] != "None" else ""
+            context += f"- {row['Feedback']} ({row['Votes']} votes){task_info}\n"
 
-    # 📬 User input
-    prompt = st.chat_input("Ask about your sprint plan or say 'fix component mismatches'...")
+        prompt = st.chat_input("Ask me anything about this retrospective...")
 
-    if prompt:
-        st.session_state.ai_messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        if prompt:
+            st.session_state.ai_messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-        # If user wants to fix mismatches
-        if "fix" in prompt.lower() and "mismatch" in prompt.lower():
             with st.chat_message("assistant"):
-                st.success("Fixing tasks by component expertise...")
-                reassigned = 0
-                for idx, row in mismatches.iterrows():
-                    correct_member = next((m for m, c in expertise_dict.items() if c == row["Component"]), None)
-                    if correct_member:
-                        df.at[idx, "Assigned To"] = correct_member
-                        reassigned += 1
-
-                st.success(f"Reassigned {reassigned} mismatched tasks.")
-                st.dataframe(df[["ID", "Title", "Component", "Assigned To"]], use_container_width=True)
-
-                st.session_state.df_tasks = df  # Save back corrected
-
-                st.session_state.ai_messages.append({
-                    "role": "assistant",
-                    "content": f"I found and reassigned {reassigned} tasks to match component expertise."
-                })
-
-        else:
-            # 🧠 AI Context
-            context = f"""You are an expert sprint planning assistant. Your ONLY job is to analyze the actual data below and give specific, actionable, and detailed advice. Never give generic advice. If you cannot answer specifically, say 'Not enough data.'
-
-There are {len(df)} tasks. Component expertise is as follows:\n"""
-            for m, c in expertise_dict.items():
-                context += f"- {m} specializes in {c}\n"
-
-            if not mismatches.empty:
-                context += "\n⚠️ Detected mismatches:\n"
-                for _, row in mismatches.iterrows():
-                    context += f"- Task '{row['Title']}' assigned to {row['Assigned To']} but it's {row['Component']}\n"
-
-            # Add assignment results, priorities, capacity, etc.
-            context += f"\nTeam Members: {', '.join(team_members.keys())}\n"
-            context += f"Total Team Capacity: {sum(team_members.values())} hours\n"
-            context += f"Priorities: {', '.join(df['Priority'].unique())}\n"
-            if 'results' in locals() and results:
-                context += f"Capacity Utilization: {results['assigned_hours']}\n"
-                context += f"Priority Distribution: {results['assigned_priorities']}\n"
-            if not df.empty:
-                context += "\nTask List:\n"
-                for _, row in df.iterrows():
-                    context += f"- {row['ID']}: {row['Title']} (Priority: {row['Priority']}, Estimate: {row['Original Estimates']}, Assigned: {row['Assigned To']})\n"
-            context += f"\nUser prompt: {prompt}\n"
-            context += "\nNever give generic advice. Always reference the actual data, team members, tasks, priorities, and results above. If you cannot answer specifically, say 'Not enough data.'\n"
-
-            # 🔁 Stream response from OpenRouter
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
+                msg_placeholder = st.empty()
                 full_response = ""
 
                 headers = {
@@ -2384,41 +2334,35 @@ There are {len(df)} tasks. Component expertise is as follows:\n"""
                 body = {
                     "model": "openai/gpt-3.5-turbo",
                     "messages": [{"role": "system", "content": context}] +
-                                [msg for msg in st.session_state.ai_messages if msg["role"] != "assistant"],
+                                [m for m in st.session_state.ai_messages if m["role"] != "assistant"],
                     "temperature": 0.7,
                     "max_tokens": 1500,
                     "stream": True
                 }
 
                 try:
-                    with requests.post(
-                        "https://openrouter.ai/api/v1/chat/completions",
-                        headers=headers,
-                        json=body,
-                        stream=True,verify=False
-                    ) as response:
+                    with requests.post("https://openrouter.ai/api/v1/chat/completions",
+                                    headers=headers, json=body, stream=True) as response:
                         if response.status_code == 200:
                             for chunk in response.iter_lines():
                                 if chunk:
-                                    chunk_str = chunk.decode('utf-8')
-                                    if chunk_str.startswith("data:"):
+                                    chunk_str = chunk.decode("utf-8")
+                                    if chunk_str.startswith("data:") and chunk_str.strip() != "data: [DONE]":
                                         try:
                                             data = json.loads(chunk_str[5:])
-                                            if "choices" in data and data["choices"]:
-                                                delta = data["choices"][0].get("delta", {})
-                                                if "content" in delta:
-                                                    full_response += delta["content"]
-                                                    message_placeholder.markdown(full_response + "▌")
+                                            delta = data["choices"][0].get("delta", {})
+                                            if "content" in delta:
+                                                full_response += delta["content"]
+                                                msg_placeholder.markdown(full_response + "▌")
                                         except json.JSONDecodeError:
-                                            continue
+                                            continue  # Skip invalid chunk
                         else:
                             full_response = f"Error: {response.status_code} - {response.text}"
                 except Exception as e:
-                    full_response = f"An error occurred: {str(e)}"
+                    full_response = f"Error: {e}"
 
-                message_placeholder.markdown(full_response)
+                msg_placeholder.markdown(full_response)
                 st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
-
 def smart_task_assignment():
     st.markdown("<div class='animated-header'><h2>Smart Task Assignment</h2></div>", unsafe_allow_html=True)
 
@@ -2589,86 +2533,64 @@ def smart_task_assignment():
 # AI assistant tab
     ai_tab = st.tabs(["AI Suggestions"])[0]
     with ai_tab:
-        st.header("AI Suggestions and Insights")
+        st.header("AI Suggestions & Insights")
         st.markdown("Powered by OpenRouter + OpenAI")
 
         if "ai_messages" not in st.session_state:
             st.session_state.ai_messages = [
-                {"role": "assistant", "content": "Hello! I'm your sprint planning assistant. How can I help you with your task assignments today?"}
+                {"role": "assistant", "content": "Hi! I'm your task assignment assistant. How can I help?"}
             ]
 
-        for message in st.session_state.ai_messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message.get("content", ""))
+        for msg in st.session_state.ai_messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
-        api_key = st.text_input("OpenRouter API Key", type="password", key="ai_api_key")
+        api_key = st.text_input("🔑 OpenRouter API Key", type="password", key="ai_api_key")
 
-        if st.session_state.df_tasks is None:
-            st.info("Please upload task data in the Upload Tasks tab first.")
+        if not st.session_state.developer_expertise:
+            st.info("Please add developers and their expertise first.")
             st.stop()
 
-        df = st.session_state.df_tasks.copy()
-        team_members = st.session_state.team_members if "team_members" in st.session_state else {}
-        results = st.session_state.results if "results" in st.session_state else None
+        # Build comprehensive context from expertise and task analysis
+        context = "You are an expert AI assistant for task assignment and workload analysis.\n\n"
 
-        # Extract expertise and component info
-        expertise_col_member = "Unnamed: 15"
-        expertise_col_comp = "Unnamed: 16"
-        expertise_dict = {}
-        if expertise_col_member in df.columns and expertise_col_comp in df.columns:
-            expertise_map = df[[expertise_col_member, expertise_col_comp]].dropna()
-            expertise_map.columns = ["Member", "Expertise"]
-            expertise_dict = expertise_map.set_index("Member")["Expertise"].to_dict()
-        if "Title" in df.columns:
-            df["Component"] = df["Title"].str.extract(r"(Comp\\d+)", expand=False)
-        df["Assigned To"] = df["Assigned To"].fillna("").str.strip()
-        df["Mismatch"] = df.apply(
-            lambda row: (
-                row["Assigned To"] in expertise_dict and
-                pd.notna(row["Component"]) and
-                expertise_dict[row["Assigned To"]] != row["Component"]
-            ),
-            axis=1
-        )
-        mismatches = df[df["Mismatch"]]
+        # Developer expertise and capacity analysis
+        total_hours = sum(st.session_state.developer_hours.values())
+        context += f"Team Capacity Analysis:\n"
+        context += f"- Total team capacity: {total_hours} hours\n"
+        context += f"- Number of developers: {len(st.session_state.developer_expertise)}\n\n"
 
-        # Build context for AI
-        context = "You are an expert AI assistant for sprint planning. Your ONLY job is to analyze the actual data below and give specific, actionable, and detailed advice. Never give generic advice. If you cannot answer specifically, say 'Not enough data.'\n\n"
-        context += f"Team Members: {', '.join(team_members.keys())}\n"
-        context += f"Total Team Capacity: {sum(team_members.values())} hours\n"
-        context += f"Tasks: {len(df)}\n"
-        context += f"Priorities: {', '.join(df['Priority'].unique())}\n"
-        context += f"Sprint File: Task_Assignments.xlsx\n"
-        if results:
-            context += f"Capacity Utilization: {results['assigned_hours']}\n"
-            context += f"Priority Distribution: {results['assigned_priorities']}\n"
-        if not df.empty:
-            context += "\nTask List:\n"
-            for _, row in df.iterrows():
-                context += f"- {row['ID']}: {row['Title']} (Priority: {row['Priority']}, Estimate: {row['Original Estimates']}, Assigned: {row['Assigned To']})\n"
-        if not mismatches.empty:
-            context += "\nComponent Mismatches:\n"
-            for _, row in mismatches.iterrows():
-                context += f"- {row['ID']}: {row['Title']} assigned to {row['Assigned To']} (Expertise: {expertise_dict.get(row['Assigned To'], 'N/A')}, Component: {row['Component']})\n"
-            context += "\nSuggest specific fixes for these mismatches.\n"
-        context += "\nNever give generic advice. Always reference the actual data, team members, tasks, priorities, and results above. If you cannot answer specifically, say 'Not enough data.'\n"
+        context += f"Developer Expertise:\n"
+        for dev, expertise in st.session_state.developer_expertise.items():
+            hours = st.session_state.developer_hours.get(dev, 0)
+            percent = (hours/total_hours * 100) if total_hours > 0 else 0
+            context += f"- {dev}: {', '.join(expertise)} ({hours} hours, {percent:.1f}% of total capacity)\n"
 
-        prompt = st.chat_input("Ask about your sprint plan, optimizations, or say 'fix component mismatches'...")
+        if df_tasks is not None:
+            # Task analysis
+            total_tasks = len(df_tasks)
+            total_estimates = df_tasks['Original Estimates'].sum() if 'Original Estimates' in df_tasks.columns else 0
+            priorities = df_tasks['Priority'].value_counts() if 'Priority' in df_tasks.columns else {}
+
+            context += f"\nTask Analysis:\n"
+            context += f"- Total tasks: {total_tasks}\n"
+            context += f"- Total estimated hours: {total_estimates:.1f}\n"
+            context += f"- Priority distribution:\n"
+            for priority, count in priorities.items():
+                context += f"  * {priority}: {count} tasks ({count/total_tasks*100:.1f}%)\n"
+
+        if df_tasks is not None:
+            context += "\\nCurrent tasks:\\n"
+            for _, task in df_tasks.iterrows():
+                context += f"- {task['Title']} (Priority: {task['Priority']}, Hours: {task['Original Estimates']})\\n"
+
+        prompt = st.chat_input("Ask me about developer assignments or task distribution...")
 
         if prompt:
             st.session_state.ai_messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # If user wants to fix mismatches, add extra instruction
-            if "fix" in prompt.lower() and "mismatch" in prompt.lower():
-                context += "\nList the mismatches and suggest which team member should be reassigned to which task for optimal expertise alignment.\n"
-            elif "optimise" in prompt.lower() or "optimize" in prompt.lower():
-                context += "\nSuggest concrete optimization strategies for sprint planning, task assignment, and capacity utilization using the actual data.\n"
-            else:
-                context += "\nAlways answer with specific, actionable advice using the actual data above.\n"
-
-            # 🧠 Stream response from OpenRouter
             with st.chat_message("assistant"):
                 msg_placeholder = st.empty()
                 full_response = ""
@@ -2690,7 +2612,7 @@ def smart_task_assignment():
 
                 try:
                     with requests.post("https://openrouter.ai/api/v1/chat/completions",
-                                    headers=headers, json=body, stream=True,verify=False) as response:
+                                    headers=headers, json=body, stream=True) as response:
                         if response.status_code == 200:
                             for chunk in response.iter_lines():
                                 if chunk:
