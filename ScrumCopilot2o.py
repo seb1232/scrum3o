@@ -1268,18 +1268,18 @@ def render_sprint_task_planner():
                                     # Try to find a task that fits the member's remaining sprint capacity
                                     for idx in task_groups[current_priority].index:
                                         task = task_groups[current_priority].loc[idx]
-                                        estimate = task["Original Estimates"];
+                                        estimate = task["Original Estimates"]
 
                                         if pd.isna(estimate) or estimate <= 0:
                                             continue
 
                                         if estimate <= members_sprint_capacity[member]:
-                                            task_id = task["ID"];
+                                            task_id = task["ID"]
 
                                             # Assign in the original dataframe
                                             df.loc[df["ID"] == task_id, "Assigned To"] = member
                                             df.loc[df["ID"] == task_id, "Sprint"] = sprint_name
-                                            df.loc[df["ID"] == task_id, "Iteration Path"] = f"/{sprint_name}/{current_priority}";
+                                            df.loc[df["ID"] == task_id, "Iteration Path"] = f"/{sprint_name}/{current_priority}"
 
                                             # Update member statistics (both sprint-specific and overall)
                                             members_sprint_capacity[member] -= estimate
@@ -1319,7 +1319,7 @@ def render_sprint_task_planner():
                                 for idx in remaining_tasks.index:
                                     task = remaining_tasks.loc[idx]
                                     task_id = task["ID"]
-                                    estimate = task["Original Estimates"];
+                                    estimate = task["Original Estimates"]
 
                                     if pd.isna(estimate) or estimate <= 0:
                                         continue
@@ -1342,7 +1342,7 @@ def render_sprint_task_planner():
                                             # Assign in the original dataframe
                                             df.loc[df["ID"] == task_id, "Assigned To"] = member
                                             df.loc[df["ID"] == task_id, "Sprint"] = sprint_name
-                                            df.loc[df["ID"] == task_id, "Iteration Path"] = f"/{sprint_name}/{priority_level}";
+                                            df.loc[df["ID"] == task_id, "Iteration Path"] = f"/{sprint_name}/{priority_level}"
 
                                             # Update member statistics
                                             members_sprint_capacity[member] -= estimate
@@ -1512,7 +1512,7 @@ def render_sprint_task_planner():
 
             fig.patch.set_facecolor('#1e1e1e')
             plt.tight_layout()
-            st.pyplot(fig);
+            st.pyplot(fig)
 
             # Add detailed priority distribution as tables
             st.subheader("Detailed Priority Mix by Team Member")
@@ -1566,7 +1566,7 @@ def render_sprint_task_planner():
                 sprint_data = results["sprint_data"]
                 num_sprints = sprint_data["num_sprints"]
                 sprint_assignments = sprint_data["sprint_assignments"]
-                sprint_capacities = sprint_data["sprint_capacities"];
+                sprint_capacities = sprint_data["sprint_capacities"]
 
                 st.header("Sprint Planning")
                 st.markdown("""
@@ -1701,7 +1701,7 @@ def render_sprint_task_planner():
                             sprint_priority_counts[member][priority] += 1
 
                         # Create stacked bar chart for sprint priority distribution
-                        priority_data = {m: [sprint_priority_counts[m].get(p, 0) for p in priorities] for m in members};
+                        priority_data = {m: [sprint_priority_counts[m].get(p, 0) for p in priorities] for m in members}
 
                         fig, ax = plt.subplots(figsize=(10, 5))
                         bottom = np.zeros(len(members))
@@ -1967,7 +1967,7 @@ def render_sprint_task_planner():
 
         for message in st.session_state.ai_messages:
             with st.chat_message(message["role"]):
-                st.markdown(message.get("content", ""))
+                st.markdown(message["content"])
 
         api_key = st.text_input("OpenRouter API Key", type="password", key="ai_api_key")
 
@@ -1976,19 +1976,24 @@ def render_sprint_task_planner():
             st.stop()
 
         df = st.session_state.df_tasks.copy()
-        team_members = st.session_state.team_members if "team_members" in st.session_state else {}
-        results = st.session_state.results if "results" in st.session_state else None
 
-        # Extract expertise and component info
+        # 🔍 Extract component expertise from the task file
         expertise_col_member = "Unnamed: 15"
         expertise_col_comp = "Unnamed: 16"
-        expertise_dict = {}
+        component_col = None
+
         if expertise_col_member in df.columns and expertise_col_comp in df.columns:
             expertise_map = df[[expertise_col_member, expertise_col_comp]].dropna()
             expertise_map.columns = ["Member", "Expertise"]
             expertise_dict = expertise_map.set_index("Member")["Expertise"].to_dict()
+        else:
+            expertise_dict = {}
+
+        # 📦 Extract component name from Title (e.g., "Comp1: something")
         if "Title" in df.columns:
-            df["Component"] = df["Title"].str.extract(r"(Comp\\d+)", expand=False)
+            df["Component"] = df["Title"].str.extract(r"(Comp\d+)", expand=False)
+
+        # 🧠 Analyze mismatches
         df["Assigned To"] = df["Assigned To"].fillna("").str.strip()
         df["Mismatch"] = df.apply(
             lambda row: (
@@ -2000,97 +2005,418 @@ def render_sprint_task_planner():
         )
         mismatches = df[df["Mismatch"]]
 
-        # Build context for AI
-        context = "You are an expert AI assistant for sprint planning. Your ONLY job is to analyze the actual data below and give specific, actionable, and detailed advice. Never give generic advice. If you cannot answer specifically, say 'Not enough data.'\n\n"
-        context += f"Team Members: {', '.join(team_members.keys())}\n"
-        context += f"Total Team Capacity: {sum(team_members.values())} hours\n"
-        context += f"Tasks: {len(df)}\n"
-        context += f"Priorities: {', '.join(df['Priority'].unique())}\n"
-        context += f"Sprint File: Task_Assignments.xlsx\n"
-         # Add assignment results, priorities, capacity, etc.
-        context += f"\nTeam Members: {', '.join(team_members.keys())}\n"
-        context += f"Total Team Capacity: {sum(team_members.values())} hours\n"
-        context += f"Priorities: {', '.join(df['Priority'].unique())}\n"
-        if 'results' in locals() and results:
-            context += f"Capacity Utilization: {results['assigned_hours']}\n"
-            context += f"Priority Distribution: {results['assigned_priorities']}\n"
-        if not df.empty:
-            context += "\nTask List:\n"
-            for _, row in df.iterrows():
-                context += f"- {row['ID']}: {row['Title']} (Priority: {row['Priority']}, Estimate: {row['Original Estimates']}, Assigned: {row['Assigned To']})\n"
-        context += f"\nUser prompt: {prompt}\n"
-        context += "\nNever give generic advice. Always reference the actual data, team members, tasks, priorities, and results above. If you cannot answer specifically, say 'Not enough data.'\n"
-        if results:
-            context += f"Capacity Utilization: {results['assigned_hours']}\n"
-            context += f"Priority Distribution: {results['assigned_priorities']}\n"
-        if not df.empty:
-            context += "\nTask List:\n"
-            for _, row in df.iterrows():
-                context += f"- {row['ID']}: {row['Title']} (Priority: {row['Priority']}, Estimate: {row['Original Estimates']}, Assigned: {row['Assigned To']})\n"
-        if not mismatches.empty:
-            context += "\nComponent Mismatches:\n"
-            for _, row in mismatches.iterrows():
-                context += f"- {row['ID']}: {row['Title']} assigned to {row['Assigned To']} (Expertise: {expertise_dict.get(row['Assigned To'], 'N/A')}, Component: {row['Component']})\n"
-            context += "\nSuggest specific fixes for these mismatches.\n"
-        context += "\nNever give generic advice. Always reference the actual data, team members, tasks, priorities, and results above. If you cannot answer specifically, say 'Not enough data.'\n"
-
-        prompt = st.chat_input("Ask about your sprint plan, optimizations, or say 'fix component mismatches'...")
+        # 📬 User input
+        prompt = st.chat_input("Ask about your sprint plan or say 'fix component mismatches'...")
 
         if prompt:
             st.session_state.ai_messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # If user wants to fix mismatches, add extra instruction
+            # If user wants to fix mismatches
             if "fix" in prompt.lower() and "mismatch" in prompt.lower():
-                context += "\nList the mismatches and suggest which team member should be reassigned to which task for optimal expertise alignment.\n"
-            elif "optimise" in prompt.lower() or "optimize" in prompt.lower():
-                context += "\nSuggest concrete optimization strategies for sprint planning, task assignment, and capacity utilization using the actual data.\n"
-            else:
-                context += "\nAlways answer with specific, actionable advice using the actual data above.\n"
+                with st.chat_message("assistant"):
+                    st.success("Fixing tasks by component expertise...")
+                    reassigned = 0
+                    for idx, row in mismatches.iterrows():
+                        correct_member = next((m for m, c in expertise_dict.items() if c == row["Component"]), None)
+                        if correct_member:
+                            df.at[idx, "Assigned To"] = correct_member
+                            reassigned += 1
 
-            # 🧠 Stream response from OpenRouter
+                    st.success(f"Reassigned {reassigned} mismatched tasks.")
+                    st.dataframe(df[["ID", "Title", "Component", "Assigned To"]], use_container_width=True)
+
+                    st.session_state.df_tasks = df  # Save back corrected
+
+                    st.session_state.ai_messages.append({
+                        "role": "assistant",
+                        "content": f"I found and reassigned {reassigned} tasks to match component expertise."
+                    })
+
+            else:
+                # 🧠 AI Context
+                context = f"""You are an expert sprint planning assistant.
+
+    There are {len(df)} tasks. Component expertise is as follows:\n"""
+                for m, c in expertise_dict.items():
+                    context += f"- {m} specializes in {c}\n"
+
+                if not mismatches.empty:
+                    context += "\n⚠️ Detected mismatches:\n"
+                    for _, row in mismatches.iterrows():
+                        context += f"- Task '{row['Title']}' assigned to {row['Assigned To']} but it's {row['Component']}\n"
+
+                context += f"\nUser prompt: {prompt}"
+
+                # 🔁 Stream response from OpenRouter
+                with st.chat_message("assistant"):
+                    message_placeholder = st.empty()
+                    full_response = ""
+
+                    headers = {
+                        "Authorization": f"Bearer {api_key}",
+                        "HTTP-Referer": "https://localhost",
+                        "Content-Type": "application/json"
+                    }
+
+                    body = {
+                        "model": "openai/gpt-3.5-turbo",
+                        "messages": [{"role": "system", "content": context}] +
+                                    [msg for msg in st.session_state.ai_messages if msg["role"] != "assistant"],
+                        "temperature": 0.7,
+                        "max_tokens": 1500,
+                        "stream": True
+                    }
+
+                    try:
+                        with requests.post(
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers=headers,
+                            json=body,
+                            stream=True
+                        ) as response:
+                            if response.status_code == 200:
+                                for chunk in response.iter_lines():
+                                    if chunk:
+                                        chunk_str = chunk.decode('utf-8')
+                                        if chunk_str.startswith("data:"):
+                                            try:
+                                                data = json.loads(chunk_str[5:])
+                                                if "choices" in data and data["choices"]:
+                                                    delta = data["choices"][0].get("delta", {})
+                                                    if "content" in delta:
+                                                        full_response += delta["content"]
+                                                        message_placeholder.markdown(full_response + "▌")
+                                            except json.JSONDecodeError:
+                                                continue
+                            else:
+                                full_response = f"Error: {response.status_code} - {response.text}"
+                    except Exception as e:
+                        full_response = f"An error occurred: {str(e)}"
+
+                    message_placeholder.markdown(full_response)
+                    st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
+
+def render_retrospective_analysis():
+    st.markdown("""
+    <div class="animated-header">
+        <div class="floating-container"></div>
+        <h1 style="color: white; font-size: 48px; margin-bottom: 15px; text-align: center;">RetroSpective Analysis Tool</h1>
+        <p style="color: white; font-size: 18px; text-align: center; animation: fadeInUp 1s 0.5s forwards; opacity: 0; line-height: 1.6;">
+        A Tool for Analysis of feedback from Team Retrospectives   
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("Upload multiple retrospective CSV files to analyze and compare feedback across team retrospectives.")
+
+    # Sidebar for file upload and filtering controls
+    with st.sidebar:
+        st.header("Controls")
+
+        uploaded_files = st.file_uploader(
+            "Upload Retrospective CSV Files",
+            type=["csv"],
+            accept_multiple_files=True,
+            help="Upload one or more CSV files containing retrospective data",
+            key="retro_upload"
+        )
+
+        st.subheader("Filter Settings")
+        min_votes = st.slider("Minimum Votes", 0, 100, 1, key="retro_min_votes")
+        max_votes = st.slider("Maximum Votes", min_votes, 100, 50, key="retro_max_votes")
+
+        if uploaded_files:
+            st.info(f"Selected {len(uploaded_files)} file(s)")
+        else:
+            st.warning("Please upload at least one CSV file")
+
+    # Main content area
+    if not uploaded_files:
+        st.info("👈 Please upload retrospective CSV files using the sidebar to begin analysis")
+
+        # Show example of expected format
+        st.subheader("Expected CSV Format")
+        st.markdown(""" 
+        Your CSV files should include columns for feedback description and votes, with format like:
+        ```
+        Type,Description,Votes
+        Went Well,The team was collaborative,5
+        Needs Improvement,Documentation is lacking,3
+        ```
+
+        The tool will also recognize associated tasks when formatted as:
+        ```
+        Feedback Description,Work Item Title,Work Item Type,Work Item Id,
+        Documentation is lacking,Improve Docs,Task,12345
+        ```
+        """)
+
+    else:
+        # Process the uploaded files when the analyze button is clicked
+        analyze_button = st.button("Analyze Retrospectives", type="primary")
+
+        if analyze_button:
+            with st.spinner("Processing retrospective data..."):
+                feedback_results, processing_logs = compare_retrospectives(
+                    uploaded_files, min_votes, max_votes
+                )
+
+                # Save results to session state for later use in the AI assistant
+                st.session_state.retro_feedback = feedback_results
+
+                # Show processing results
+                with st.expander("Processing Logs", expanded=True):
+                    for log in processing_logs:
+                        st.write(log)
+
+                # Convert to DataFrame for easier handling
+                results_df = create_dataframe_from_results(feedback_results)
+
+                if len(results_df) == 0 or (len(results_df) == 1 and "No valid feedback found" in results_df["Feedback"].iloc[0]):
+                    st.error("No feedback items found within the selected vote range. Try adjusting your filters.")
+                else:
+                    # Display the results
+                    st.subheader(f"Consolidated Feedback ({len(results_df)} items)")
+                    st.dataframe(
+                        results_df,
+                        column_config={
+                            "Feedback": st.column_config.TextColumn("Feedback"),
+                            "Task ID": st.column_config.TextColumn("Task ID"),
+                            "Votes": st.column_config.NumberColumn("Votes")
+                        },
+                        use_container_width=True
+                    )
+
+                    # Visualization section
+                    st.subheader("Feedback Visualization")
+
+                    # Only show top 15 items in chart to avoid overcrowding
+                    chart_data = results_df.head(15) if len(results_df) > 15 else results_df
+
+                    # Create a horizontal bar chart with Plotly
+                    fig = px.bar(
+                        chart_data,
+                        x="Votes",
+                        y="Feedback",
+                        orientation='h',
+                        title=f"Top Feedback Items by Vote Count (min: {min_votes}, max: {max_votes})",
+                        color="Votes",
+                        color_continuous_scale="Viridis"
+                    )
+                    fig.update_layout(yaxis={'categoryorder':'total ascending'})
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # Distribution of votes
+                    st.subheader("Vote Distribution")
+                    vote_distribution = px.histogram(
+                        results_df, 
+                        x="Votes",
+                        nbins=20,
+                        title="Distribution of Votes",
+                        labels={"Votes": "Vote Count", "count": "Number of Feedback Items"}
+                    )
+                    st.plotly_chart(vote_distribution, use_container_width=True)
+
+                    # Count items with and without associated tasks
+                    with_tasks = results_df["Task ID"].apply(lambda x: x != "None").sum()
+                    without_tasks = len(results_df) - with_tasks
+
+                    # Create pie chart for task association
+                    fig3, ax3 = plt.subplots(figsize=(8, 5))
+                    ax3.pie(
+                        [with_tasks, without_tasks],
+                        labels=["With Task ID", "Without Task ID"],
+                        autopct='%1.1f%%',
+                        startangle=90,
+                        colors=['#4CAF50', '#FF9800']
+                    )
+                    ax3.set_title("Feedback Items With Task Association")
+                    ax3.axis('equal')
+                    st.pyplot(fig3)
+
+                    # Export options
+                    st.subheader("Export Results")
+                    export_format = st.radio("Select export format:", ["CSV", "Markdown"])
+
+                    if export_format == "CSV":
+                        csv = results_df.to_csv(index=False)
+                        st.download_button(
+                            label="Download CSV",
+                            data=csv,
+                            file_name="retrospective_analysis.csv",
+                            mime="text/csv"
+                        )
+                    else:  # Markdown
+                        # Generate markdown content
+                        markdown_content = "# Retrospective Analysis Results\n\n"
+                        markdown_content += f"Filter settings: Min Votes = {min_votes}, Max Votes = {max_votes}\n\n"
+                        markdown_content += "| Feedback | Task ID | Votes |\n| --- | --- | --- |\n"
+                        for _, row in results_df.iterrows():
+                            markdown_content += f"| {row['Feedback']} | {row['Task ID']} | {row['Votes']} |\n"
+
+                        st.download_button(
+                            label="Download Markdown",
+                            data=markdown_content,
+                            file_name="retrospective_analysis.md",
+                            mime="text/markdown"
+                        )
+
+    # AI SUGGESTIONS TAB
+ai_tab = st.tabs(["6. AI Suggestions"])[0]
+
+with ai_tab:
+    st.header("AI Suggestions and Insights")
+    st.markdown("Powered by OpenRouter + OpenAI")
+
+    if "ai_messages" not in st.session_state:
+        st.session_state.ai_messages = [
+            {"role": "assistant", "content": "Hello! I'm your sprint planning assistant. How can I help you with your task assignments today?"}
+        ]
+
+    for message in st.session_state.ai_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    api_key = st.text_input("OpenRouter API Key", type="password", key="ai_api_key")
+
+    if st.session_state.df_tasks is None:
+        st.info("Please upload task data in the Upload Tasks tab first.")
+        st.stop()
+
+    df = st.session_state.df_tasks.copy()
+
+    # 🔍 Extract component expertise from the task file
+    expertise_col_member = "Unnamed: 15"
+    expertise_col_comp = "Unnamed: 16"
+    component_col = None
+
+    if expertise_col_member in df.columns and expertise_col_comp in df.columns:
+        expertise_map = df[[expertise_col_member, expertise_col_comp]].dropna()
+        expertise_map.columns = ["Member", "Expertise"]
+        expertise_dict = expertise_map.set_index("Member")["Expertise"].to_dict()
+    else:
+        expertise_dict = {}
+
+    # 📦 Extract component name from Title (e.g., "Comp1: something")
+    if "Title" in df.columns:
+        df["Component"] = df["Title"].str.extract(r"(Comp\d+)", expand=False)
+
+    # 🧠 Analyze mismatches
+    df["Assigned To"] = df["Assigned To"].fillna("").str.strip()
+    df["Mismatch"] = df.apply(
+        lambda row: (
+            row["Assigned To"] in expertise_dict and
+            pd.notna(row["Component"]) and
+            expertise_dict[row["Assigned To"]] != row["Component"]
+        ),
+        axis=1
+    )
+    mismatches = df[df["Mismatch"]]
+
+    # 📬 User input
+    prompt = st.chat_input("Ask about your sprint plan or say 'fix component mismatches'...")
+
+    if prompt:
+        st.session_state.ai_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # If user wants to fix mismatches
+        if "fix" in prompt.lower() and "mismatch" in prompt.lower():
             with st.chat_message("assistant"):
-                msg_placeholder = st.empty()
+                st.success("Fixing tasks by component expertise...")
+                reassigned = 0
+                for idx, row in mismatches.iterrows():
+                    correct_member = next((m for m, c in expertise_dict.items() if c == row["Component"]), None)
+                    if correct_member:
+                        df.at[idx, "Assigned To"] = correct_member
+                        reassigned += 1
+
+                st.success(f"Reassigned {reassigned} mismatched tasks.")
+                st.dataframe(df[["ID", "Title", "Component", "Assigned To"]], use_container_width=True)
+
+                st.session_state.df_tasks = df  # Save back corrected
+
+                st.session_state.ai_messages.append({
+                    "role": "assistant",
+                    "content": f"I found and reassigned {reassigned} tasks to match component expertise."
+                })
+
+        else:
+            # 🧠 AI Context
+            context = f"""You are an expert sprint planning assistant. Your ONLY job is to analyze the actual data below and give specific, actionable, and detailed advice. Never give generic advice. If you cannot answer specifically, say 'Not enough data.'
+
+There are {len(df)} tasks. Component expertise is as follows:\n"""
+            for m, c in expertise_dict.items():
+                context += f"- {m} specializes in {c}\n"
+
+            if not mismatches.empty:
+                context += "\n⚠️ Detected mismatches:\n"
+                for _, row in mismatches.iterrows():
+                    context += f"- Task '{row['Title']}' assigned to {row['Assigned To']} but it's {row['Component']}\n"
+
+            # Add assignment results, priorities, capacity, etc.
+            context += f"\nTeam Members: {', '.join(team_members.keys())}\n"
+            context += f"Total Team Capacity: {sum(team_members.values())} hours\n"
+            context += f"Priorities: {', '.join(df['Priority'].unique())}\n"
+            if 'results' in locals() and results:
+                context += f"Capacity Utilization: {results['assigned_hours']}\n"
+                context += f"Priority Distribution: {results['assigned_priorities']}\n"
+            if not df.empty:
+                context += "\nTask List:\n"
+                for _, row in df.iterrows():
+                    context += f"- {row['ID']}: {row['Title']} (Priority: {row['Priority']}, Estimate: {row['Original Estimates']}, Assigned: {row['Assigned To']})\n"
+            context += f"\nUser prompt: {prompt}\n"
+            context += "\nNever give generic advice. Always reference the actual data, team members, tasks, priorities, and results above. If you cannot answer specifically, say 'Not enough data.'\n"
+
+            # 🔁 Stream response from OpenRouter
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
                 full_response = ""
 
                 headers = {
                     "Authorization": f"Bearer {api_key}",
-                    "HTTP-Referer": "https://0.0.0.0",
+                    "HTTP-Referer": "https://localhost",
                     "Content-Type": "application/json"
                 }
 
                 body = {
                     "model": "openai/gpt-3.5-turbo",
                     "messages": [{"role": "system", "content": context}] +
-                                [m for m in st.session_state.ai_messages if m["role"] != "assistant"],
+                                [msg for msg in st.session_state.ai_messages if msg["role"] != "assistant"],
                     "temperature": 0.7,
                     "max_tokens": 1500,
                     "stream": True
                 }
 
                 try:
-                    with requests.post("https://openrouter.ai/api/v1/chat/completions",
-                                    headers=headers, json=body, stream=True) as response:
+                    with requests.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers=headers,
+                        json=body,
+                        stream=True,verify=False
+                    ) as response:
                         if response.status_code == 200:
                             for chunk in response.iter_lines():
                                 if chunk:
-                                    chunk_str = chunk.decode("utf-8")
-                                    if chunk_str.startswith("data:") and chunk_str.strip() != "data: [DONE]":
+                                    chunk_str = chunk.decode('utf-8')
+                                    if chunk_str.startswith("data:"):
                                         try:
                                             data = json.loads(chunk_str[5:])
-                                            delta = data["choices"][0].get("delta", {})
-                                            if "content" in delta:
-                                                full_response += delta["content"]
-                                                msg_placeholder.markdown(full_response + "▌")
+                                            if "choices" in data and data["choices"]:
+                                                delta = data["choices"][0].get("delta", {})
+                                                if "content" in delta:
+                                                    full_response += delta["content"]
+                                                    message_placeholder.markdown(full_response + "▌")
                                         except json.JSONDecodeError:
                                             continue
                         else:
                             full_response = f"Error: {response.status_code} - {response.text}"
                 except Exception as e:
-                    full_response = f"Error: {e}"
+                    full_response = f"An error occurred: {str(e)}"
 
-                msg_placeholder.markdown(full_response)
+                message_placeholder.markdown(full_response)
                 st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
 
 def smart_task_assignment():
@@ -2313,19 +2639,6 @@ def smart_task_assignment():
         context += f"Tasks: {len(df)}\n"
         context += f"Priorities: {', '.join(df['Priority'].unique())}\n"
         context += f"Sprint File: Task_Assignments.xlsx\n"
-     # Add assignment results, priorities, capacity, etc.
-        context += f"\nTeam Members: {', '.join(team_members.keys())}\n"
-        context += f"Total Team Capacity: {sum(team_members.values())} hours\n"
-        context += f"Priorities: {', '.join(df['Priority'].unique())}\n"
-        if 'results' in locals() and results:
-            context += f"Capacity Utilization: {results['assigned_hours']}\n"
-            context += f"Priority Distribution: {results['assigned_priorities']}\n"
-        if not df.empty:
-            context += "\nTask List:\n"
-            for _, row in df.iterrows():
-                context += f"- {row['ID']}: {row['Title']} (Priority: {row['Priority']}, Estimate: {row['Original Estimates']}, Assigned: {row['Assigned To']})\n"
-        context += f"\nUser prompt: {prompt}\n"
-        context += "\nNever give generic advice. Always reference the actual data, team members, tasks, priorities, and results above. If you cannot answer specifically, say 'Not enough data.'\n"    
         if results:
             context += f"Capacity Utilization: {results['assigned_hours']}\n"
             context += f"Priority Distribution: {results['assigned_priorities']}\n"
@@ -2377,7 +2690,7 @@ def smart_task_assignment():
 
                 try:
                     with requests.post("https://openrouter.ai/api/v1/chat/completions",
-                                    headers=headers, json=body, stream=True) as response:
+                                    headers=headers, json=body, stream=True,verify=False) as response:
                         if response.status_code == 200:
                             for chunk in response.iter_lines():
                                 if chunk:
@@ -2469,11 +2782,37 @@ def assign_tasks_to_developers(tasks_df, developer_expertise):
 
     return assignments
 
-if __name__ == "__main__":
-    st.set_page_config(page_title="Scrum Copilot", layout="wide", initial_sidebar_state="expanded")
-    # Sidebar navigation
-    page = st.sidebar.selectbox("Choose App Page", ["Sprint Task Planner", "Smart Task Assignment"])
-    if page == "Sprint Task Planner":
-        render_sprint_task_planner()
-    elif page == "Smart Task Assignment":
-        smart_task_assignment()
+#Main Navigation
+st.sidebar.title("Navigation")
+
+# Add navigation options with simple buttons
+st.sidebar.markdown("### Choose a section:")
+
+if st.sidebar.button("🏠 Home", key="nav_home", use_container_width=True, 
+                     type="primary" if st.session_state.current_app == "home" else "secondary"):
+    st.session_state.current_app = "home"
+    st.rerun()
+
+if st.sidebar.button("📝 Sprint Task Planner", key="nav_sprint", use_container_width=True,
+                    type="primary" if st.session_state.current_app == "sprint_planner" else "secondary"):
+    st.session_state.current_app = "sprint_planner"
+    st.rerun()
+
+if st.sidebar.button("📊 Retrospective Analysis", key="nav_retro", use_container_width=True,
+                    type="primary" if st.session_state.current_app == "retro_analysis" else "secondary"):
+    st.session_state.current_app = "retro_analysis"
+    st.rerun()
+if st.sidebar.button("💡Expertise Based Assignment", key="nav_smart", use_container_width=True,
+                    type="primary" if st.session_state.current_app == "smart_task_assignment" else "secondary"):
+    st.session_state.current_app = "expertise"
+    st.rerun()
+
+# Render the selected app
+if st.session_state.current_app == "home":
+    render_home()
+elif st.session_state.current_app == "sprint_planner":
+    render_sprint_task_planner()
+elif st.session_state.current_app == "retro_analysis":
+    render_retrospective_analysis()
+elif st.session_state.current_app == "expertise":
+    smart_task_assignment()
