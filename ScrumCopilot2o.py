@@ -1449,6 +1449,10 @@ def render_sprint_task_planner():
             # Prepare data for visualization
             members = list(team_members.keys())
             capacities = [team_members[m] for m in members]
+            # Ensure all members are present in assigned_hours
+            for m in members:
+                if m not in assigned_hours:
+                    assigned_hours[m] = 0
             used_capacities = [assigned_hours[m] for m in members]
             remaining_capacities = [capacities[i] - used_capacities[i] for i in range(len(members))]
 
